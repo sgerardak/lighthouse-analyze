@@ -24,7 +24,7 @@ def answer(**overrides) -> PolicyAnswer:
         headcount=6,
         per_person=50.0,
         limit_applied=40.0,
-        verdict="over_limit",
+        verdict="above_threshold",
     )
     fields.update(overrides)
     return PolicyAnswer(**fields)
@@ -43,14 +43,14 @@ def test_consistent_answer_passes():
 
 def test_reversed_verdict_is_caught():
     """The observed failure: right division, opposite conclusion."""
-    problems = verify_arithmetic(answer(verdict="within_limit"))
+    problems = verify_arithmetic(answer(verdict="at_or_below_threshold"))
 
     assert len(problems) == 1
-    assert "within_limit" in problems[0] and "over_limit" in problems[0]
+    assert "at_or_below_threshold" in problems[0] and "above_threshold" in problems[0]
 
 
 def test_wrong_division_is_caught():
-    problems = verify_arithmetic(answer(per_person=40.0, verdict="within_limit"))
+    problems = verify_arithmetic(answer(per_person=40.0, verdict="at_or_below_threshold"))
 
     assert any("300.0/6=50.00" in p for p in problems)
 
@@ -72,18 +72,18 @@ def test_invented_limit_is_caught():
 def test_amount_without_headcount_is_compared_directly():
     """Non-per-person limits compare the total, not a per-person figure."""
     over = answer(amount_eur=300.0, headcount=None, per_person=None,
-                  limit_applied=250.0, verdict="over_limit")
+                  limit_applied=250.0, verdict="above_threshold")
     assert verify_arithmetic(over) == []
 
     under = answer(amount_eur=200.0, headcount=None, per_person=None,
-                   limit_applied=250.0, verdict="within_limit")
+                   limit_applied=250.0, verdict="at_or_below_threshold")
     assert verify_arithmetic(under) == []
 
 
 def test_exactly_at_the_limit_is_within():
     """The policy says 'up to 40 EUR', so 40 is allowed."""
     at_limit = answer(amount_eur=240.0, headcount=6, per_person=40.0,
-                      limit_applied=40.0, verdict="within_limit")
+                      limit_applied=40.0, verdict="at_or_below_threshold")
 
     assert verify_arithmetic(at_limit) == []
 
@@ -108,19 +108,19 @@ def test_verdict_sentence_states_a_per_person_overage():
     )
 
 
-def test_verdict_sentence_states_a_total_within_limit():
+def test_verdict_sentence_states_a_total_at_or_below_threshold():
     within = answer(amount_eur=200.0, headcount=None, per_person=None,
-                    limit_applied=250.0, verdict="within_limit", sources=["3.2"])
+                    limit_applied=250.0, verdict="at_or_below_threshold", sources=["3.2"])
 
     assert verdict_sentence(within) == (
-        "200 EUR is within the 250 EUR limit (section 3.2)."
+        "200 EUR is below the 250 EUR threshold (section 3.2)."
     )
 
 
 def test_verdict_sentence_disambiguates_shared_values_by_citation():
     """500 EUR appears in both 4.1 and 4.2; the cited section decides."""
     event = answer(amount_eur=600.0, headcount=None, per_person=None,
-                   limit_applied=500.0, verdict="over_limit", sources=["4.2"])
+                   limit_applied=500.0, verdict="above_threshold", sources=["4.2"])
     purchase = event.model_copy(update={"sources": ["4.1"]})
 
     assert "section 4.2" in verdict_sentence(event)
@@ -136,6 +136,38 @@ def test_no_sentence_when_no_limit_is_involved():
 
 def test_sentence_keeps_cents_when_they_matter():
     odd = answer(amount_eur=250.0, headcount=3, per_person=250.0 / 3,
-                 limit_applied=80.0, verdict="within_limit", sources=["4.2"])
+                 limit_applied=80.0, verdict="at_or_below_threshold", sources=["4.2"])
 
     assert verdict_sentence(odd).startswith("83.33 EUR per person is within")
+
+
+def test_trigger_thresholds_are_not_described_as_limits():
+    """Crossing 250 EUR in 3.2 means needing approval, not breaking a rule."""
+    receipt = answer(amount_eur=300.0, headcount=None, per_person=None,
+                     limit_applied=250.0, verdict="above_threshold", sources=["3.2"])
+
+    sentence = verdict_sentence(receipt)
+
+    assert sentence == "300 EUR is above the 250 EUR threshold (section 3.2)."
+    assert "limit" not in sentence
+    assert verify_arithmetic(receipt) == []
+
+
+def test_caps_are_still_described_as_limits():
+    """5.2's 250 EUR shares a value with 3.2's trigger but is a real cap."""
+    hotel = answer(amount_eur=300.0, headcount=None, per_person=None,
+                   limit_applied=250.0, verdict="above_threshold", sources=["5.2"])
+
+    assert verdict_sentence(hotel) == (
+        "300 EUR is above the 250 EUR limit (section 5.2)."
+    )
+
+
+def test_below_a_trigger_reads_as_below_not_within():
+    accrual = answer(amount_eur=800.0, headcount=None, per_person=None,
+                     limit_applied=1000.0, verdict="at_or_below_threshold",
+                     sources=["7.3"])
+
+    assert verdict_sentence(accrual) == (
+        "800 EUR is below the 1,000 EUR threshold (section 7.3)."
+    )

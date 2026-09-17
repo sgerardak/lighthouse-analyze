@@ -96,10 +96,15 @@ class PolicyAnswer(BaseModel):
             "if the question is not about a limit."
         ),
     )
-    verdict: Literal["within_limit", "over_limit", "not_applicable"] = Field(
+    verdict: Literal[
+        "above_threshold", "at_or_below_threshold", "not_applicable"
+    ] = Field(
         description=(
-            "Whether the amount compared is within or over limit_applied. Use "
-            "'not_applicable' when no limit is involved."
+            "Purely the numeric comparison: 'above_threshold' if the amount is "
+            "greater than limit_applied, 'at_or_below_threshold' otherwise. This "
+            "says nothing about whether the expense is allowed, since some "
+            "numbers are caps and others only trigger an approval. Use "
+            "'not_applicable' only when limit_applied is null."
         ),
     )
 

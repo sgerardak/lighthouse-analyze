@@ -2,13 +2,27 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from pydantic import ValidationError
+from tenacity import (
+    AsyncRetrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential_jitter,
+)
 
-from app.errors import LLMInvalidOutputError
+from app.config import get_settings
+from app.errors import (
+    LLMInvalidOutputError,
+    LLMTimeoutError,
+    LLMUnavailableError,
+    RequestTimeoutError,
+)
 from app.limits import verdict_sentence, verify_arithmetic
 from app.llm import get_llm_client
+from app.llm.base import LLMResult
 from app.policy import get_policy, validate_sources
 from app.prompts import build_system_prompt, build_user_message
 from app.schemas import AnalyzeResponse, PolicyAnswer
@@ -20,6 +34,14 @@ TOOL_DESCRIPTION = (
     "Submit the structured answer to the employee's policy question. "
     "This is the only way to reply."
 )
+
+# Failures a retry can plausibly fix: the provider never produced output, so
+# the retry is also free. LLMInvalidOutputError is deliberately absent.
+RETRYABLE_ERRORS = (LLMUnavailableError, LLMTimeoutError)
+
+# Backoff between attempts; tests set these to zero.
+RETRY_INITIAL_WAIT = 0.5
+RETRY_MAX_WAIT = 8.0
 
 
 def _summarise(exc: ValidationError, limit: int = 3) -> str:
@@ -34,11 +56,64 @@ def _summarise(exc: ValidationError, limit: int = 3) -> str:
 
 
 async def analyze_query(query: str, request_id: str) -> AnalyzeResponse:
+    """Answer one policy question under the overall request deadline."""
+    timeout = get_settings().REQUEST_TIMEOUT_SECONDS
+    try:
+        async with asyncio.timeout(timeout):
+            return await _analyze(query, request_id)
+    except TimeoutError as exc:
+        # Reached when the retries below outlast the deadline; the caller gets
+        # one bounded wait instead of however long the provider takes.
+        logger.warning("request_id=%s request timed out after %ss", request_id, timeout)
+        raise RequestTimeoutError(
+            f"The request did not complete within {timeout}s."
+        ) from exc
+
+
+async def _call_llm(client, request_id: str, **kwargs) -> LLMResult:
+    """Call the provider, retrying failures that a retry can plausibly fix.
+
+    Only transient errors are retried. A malformed answer is not: that call
+    already produced billable output, so retrying it pays twice, and it is a
+    deliberate decision rather than a default.
+    """
+    attempts = 1 + max(0, get_settings().MAX_RETRIES)
+
+    last_error: Exception | None = None
+
+    async for attempt in AsyncRetrying(
+        stop=stop_after_attempt(attempts),
+        wait=wait_exponential_jitter(initial=RETRY_INITIAL_WAIT, max=RETRY_MAX_WAIT),
+        retry=retry_if_exception_type(RETRYABLE_ERRORS),
+        reraise=True,
+    ):
+        with attempt:
+            number = attempt.retry_state.attempt_number
+            if number > 1:
+                logger.warning(
+                    "request_id=%s retrying llm call attempt=%d/%d after %s",
+                    request_id,
+                    number,
+                    attempts,
+                    type(last_error).__name__,
+                )
+            try:
+                return await client.get_structured_output(**kwargs)
+            except Exception as exc:
+                last_error = exc
+                raise
+
+    raise AssertionError("unreachable: AsyncRetrying always returns or raises")
+
+
+async def _analyze(query: str, request_id: str) -> AnalyzeResponse:
     """Answer one policy question, validating everything the model returned."""
     policy = get_policy()
     client = get_llm_client()
 
-    result = await client.get_structured_output(
+    result = await _call_llm(
+        client,
+        request_id,
         system_prompt=build_system_prompt(policy.text),
         user_message=build_user_message(query),
         schema=PolicyAnswer.model_json_schema(),

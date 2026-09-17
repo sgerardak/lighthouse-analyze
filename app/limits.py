@@ -22,19 +22,23 @@ class Limit:
     value: float
     section: str
     per_person: bool
+    # A cap is a number you must stay under; a trigger is one that, once
+    # crossed, requires something extra such as an approval. Crossing a trigger
+    # is not a policy breach, and the wording must not imply that it is.
+    kind: str
 
 
 POLICY_LIMITS: tuple[Limit, ...] = (
-    Limit("missing_receipt_manager_approval", 250.0, "3.2", False),
-    Limit("no_pre_approval_ceiling", 500.0, "4.1", False),
-    Limit("finance_lead_approval_floor", 2500.0, "4.1", False),
-    Limit("client_meal_per_person", 80.0, "4.2", True),
-    Limit("team_meal_per_person", 40.0, "4.2", True),
-    Limit("team_event_total_approval", 500.0, "4.2", False),
-    Limit("client_gift_per_person_year", 50.0, "4.4", True),
-    Limit("hotel_per_night", 180.0, "5.2", False),
-    Limit("hotel_per_night_capital", 250.0, "5.2", False),
-    Limit("accrual_reporting_floor", 1000.0, "7.3", False),
+    Limit("missing_receipt_manager_approval", 250.0, "3.2", False, "trigger"),
+    Limit("no_pre_approval_ceiling", 500.0, "4.1", False, "trigger"),
+    Limit("finance_lead_approval_floor", 2500.0, "4.1", False, "trigger"),
+    Limit("client_meal_per_person", 80.0, "4.2", True, "cap"),
+    Limit("team_meal_per_person", 40.0, "4.2", True, "cap"),
+    Limit("team_event_total_approval", 500.0, "4.2", False, "trigger"),
+    Limit("client_gift_per_person_year", 50.0, "4.4", True, "cap"),
+    Limit("hotel_per_night", 180.0, "5.2", False, "cap"),
+    Limit("hotel_per_night_capital", 250.0, "5.2", False, "cap"),
+    Limit("accrual_reporting_floor", 1000.0, "7.3", False, "trigger"),
 )
 
 KNOWN_LIMIT_VALUES = frozenset(limit.value for limit in POLICY_LIMITS)
@@ -79,11 +83,18 @@ def verdict_sentence(answer) -> str | None:
 
     limit = find_limit(answer.limit_applied, answer.sources)
     unit = " per person" if answer.per_person is not None else ""
-    relation = "above" if answer.verdict == "over_limit" else "within"
     section = f" (section {limit.section})" if limit else ""
+
+    # "limit" implies a breach when crossed, which is wrong for a trigger.
+    noun = "threshold" if limit and limit.kind == "trigger" else "limit"
+    if answer.verdict == "above_threshold":
+        relation = "above"
+    else:
+        relation = "below" if noun == "threshold" else "within"
+
     return (
         f"{_money(compared)} EUR{unit} is {relation} the "
-        f"{_money(answer.limit_applied)} EUR{unit} limit{section}."
+        f"{_money(answer.limit_applied)} EUR{unit} {noun}{section}."
     )
 
 
@@ -119,9 +130,9 @@ def verify_arithmetic(answer) -> list[str]:
     compared = answer.per_person if answer.per_person is not None else answer.amount_eur
     if answer.limit_applied is not None and compared is not None:
         if compared > answer.limit_applied + TOLERANCE:
-            expected_verdict = "over_limit"
+            expected_verdict = "above_threshold"
         else:
-            expected_verdict = "within_limit"
+            expected_verdict = "at_or_below_threshold"
         if answer.verdict != expected_verdict:
             problems.append(
                 f"verdict={answer.verdict!r} but {compared} vs limit "
