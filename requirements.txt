@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+anthropic
+pydantic
+pydantic-settings
+tenacity
+sse-starlette
+httpx
+pytest
+pytest-asyncio
