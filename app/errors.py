@@ -117,6 +117,16 @@ class InternalError(AppError):
     default_message = "An internal error occurred."
 
 
+class NotImplementedYetError(AppError):
+    """A requested feature exists in the API surface but is not built yet."""
+
+    error_type = "not_implemented"
+    layer = "service"
+    status_code = 501
+    retryable = False
+    default_message = "This feature is not implemented yet."
+
+
 def to_error_response(exc: AppError, request_id: str) -> ErrorResponse:
     """Build the wire-format error body for an AppError."""
     # Imported here because app.schemas imports QueryTooLongError from this

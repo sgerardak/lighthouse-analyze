@@ -16,11 +16,13 @@ from app.errors import (
     AppError,
     InternalError,
     InvalidRequestError,
+    NotImplementedYetError,
     QueryTooLongError,
     to_error_response,
 )
 from app.policy import get_policy
-from app.schemas import AnalyzeRequest, AnalyzeResponse, PolicyAnswer
+from app.schemas import AnalyzeRequest, AnalyzeResponse
+from app.service import analyze_query
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,6 +31,7 @@ logging.basicConfig(
 logger = logging.getLogger("app")
 
 settings = get_settings()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -171,16 +174,9 @@ async def health() -> dict:
 async def analyze(
     request: Request, payload: AnalyzeRequest, stream: bool = False
 ) -> AnalyzeResponse:
-    """Placeholder analysis endpoint returning a hardcoded answer."""
-    result = PolicyAnswer(
-        answer=f"Placeholder answer for: {payload.query}",
-        sources=["3.2"],
-        in_scope=True,
-        escalate_to_finance=False,
-        confidence="high",
-    )
-    return AnalyzeResponse(
-        request_id=_request_id(request),
-        model=settings.MODEL_NAME,
-        result=result,
-    )
+    """Answer a policy question, grounded in the expense policy."""
+    if stream:
+        raise NotImplementedYetError(
+            "Streaming responses are not implemented yet; call without ?stream=true."
+        )
+    return await analyze_query(payload.query, _request_id(request))

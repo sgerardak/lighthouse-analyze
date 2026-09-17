@@ -43,7 +43,11 @@ class PolicyAnswer(BaseModel):
     answer: str = Field(
         min_length=1,
         max_length=1500,
-        description="Plain-language answer to the question, grounded in the policy.",
+        description=(
+            "What the employee should know or do next, grounded in the policy. "
+            "Do not state whether an amount is within or over its limit; that "
+            "sentence is generated from the fields below and prepended."
+        ),
     )
     sources: list[str] = Field(
         description=(
@@ -63,6 +67,48 @@ class PolicyAnswer(BaseModel):
     confidence: Literal["high", "medium", "low"] = Field(
         description="How well the cited policy sections settle the question.",
     )
+    # The next four fields are the model's working, not decoration: app.limits
+    # recomputes them and rejects the answer if they disagree. They are required
+    # but nullable, because strict tool use expects every property to be present.
+    amount_eur: float | None = Field(
+        description=(
+            "The total amount in EUR the question is about, or null if the "
+            "question mentions no amount."
+        ),
+    )
+    headcount: int | None = Field(
+        # Not a Field(ge=1) constraint: strict tool use rejects 'minimum' in an
+        # integer schema, so the bound is enforced by the validator below.
+        description=(
+            "Number of people the amount is split between, or null if the "
+            "question is not about a per-person limit."
+        ),
+    )
+    per_person: float | None = Field(
+        description=(
+            "amount_eur divided by headcount, or null if either is null. "
+            "Do not round."
+        ),
+    )
+    limit_applied: float | None = Field(
+        description=(
+            "The exact EUR limit from the policy you compared against, or null "
+            "if the question is not about a limit."
+        ),
+    )
+    verdict: Literal["within_limit", "over_limit", "not_applicable"] = Field(
+        description=(
+            "Whether the amount compared is within or over limit_applied. Use "
+            "'not_applicable' when no limit is involved."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _check_headcount(self) -> PolicyAnswer:
+        """A headcount below one would make the per-person division meaningless."""
+        if self.headcount is not None and self.headcount < 1:
+            raise ValueError("headcount must be at least 1")
+        return self
 
     @model_validator(mode="after")
     def _check_out_of_scope(self) -> PolicyAnswer:

@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     REQUEST_TIMEOUT_SECONDS: int = 45
     MAX_RETRIES: int = 3
     MAX_QUERY_LENGTH: int = 2000
+    MAX_OUTPUT_TOKENS: int = 1024
     POLICY_PATH: str = "app/data/expense_policy.md"
 
 
