@@ -5,11 +5,12 @@ from __future__ import annotations
 import logging
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from app.config import get_settings
 from app.errors import (
@@ -31,6 +32,9 @@ logging.basicConfig(
 logger = logging.getLogger("app")
 
 settings = get_settings()
+
+# Resolved from this file, so the page is found whatever the working directory.
+STATIC_DIR = Path(__file__).parent / "static"
 
 
 @asynccontextmanager
@@ -157,6 +161,12 @@ async def handle_unexpected_error(request: Request, exc: Exception) -> JSONRespo
     request_id = _request_id(request)
     logger.exception("request_id=%s unhandled exception", request_id)
     return _error_json(InternalError(), request_id)
+
+
+@app.get("/", include_in_schema=False)
+async def index() -> FileResponse:
+    """Serve the demo page, so the root URL is useful rather than a 404."""
+    return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.get("/health")

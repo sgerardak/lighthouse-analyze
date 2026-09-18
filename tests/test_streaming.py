@@ -213,3 +213,17 @@ def test_endpoint_rejects_a_bad_body_without_streaming(use_client):
     assert response.status_code == 422
     assert response.headers["content-type"].startswith("application/json")
     assert response.json()["error"]["type"] == "invalid_request"
+
+
+def test_root_serves_the_demo_page():
+    """The root URL returns the UI rather than a 404."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "Finance Policy Assistant" in response.text

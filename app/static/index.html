@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Finance Policy Assistant</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --ink: #17191c;
+    --muted: #6b7280;
+    --line: #e3e6ea;
+    --accent: #2f5fe0;
+    --accent-ink: #ffffff;
+    --over: #b4341f;
+    --under: #1d7a45;
+    --warn-bg: #fdf2e6;
+    --warn-ink: #8a5216;
+    --err-bg: #fdecea;
+    --err-ink: #a12a1c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a; --card: #1c1f24; --ink: #e9ecf1; --muted: #9aa3b0;
+      --line: #2c313a; --accent: #6b93ff; --accent-ink: #10131a;
+      --over: #ff8b73; --under: #6ddc9b;
+      --warn-bg: #3a2c16; --warn-ink: #f0c68a;
+      --err-bg: #3a1f1c; --err-ink: #ffab9c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 32px 16px 64px;
+  }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 20px;
+  }
+  label { display: block; font-weight: 600; margin-bottom: 8px; }
+  textarea {
+    width: 100%; min-height: 84px; resize: vertical; padding: 12px 14px;
+    font: inherit; color: inherit; background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px;
+  }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .row { display: flex; gap: 12px; align-items: center; margin-top: 14px; flex-wrap: wrap; }
+  button {
+    font: inherit; font-weight: 600; padding: 10px 20px; border: 0;
+    border-radius: 8px; background: var(--accent); color: var(--accent-ink);
+    cursor: pointer;
+  }
+  button:disabled { opacity: .55; cursor: default; }
+  .toggle { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: .92rem; }
+  .hint { color: var(--muted); font-size: .85rem; margin-left: auto; }
+  .examples { margin: 18px 0 0; display: flex; gap: 8px; flex-wrap: wrap; }
+  .examples button {
+    background: transparent; color: var(--muted); border: 1px solid var(--line);
+    font-weight: 400; font-size: .85rem; padding: 6px 12px; border-radius: 999px;
+  }
+  #panel { margin-top: 20px; display: none; }
+  #answer { white-space: pre-wrap; min-height: 1.5em; }
+  #answer.waiting::after {
+    content: "▍"; animation: blink 1s steps(2, start) infinite; color: var(--muted);
+  }
+  @keyframes blink { to { visibility: hidden; } }
+  .facts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+  .chip {
+    font-size: .8rem; padding: 4px 10px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted);
+  }
+  .chip.over { color: var(--over); border-color: currentColor; }
+  .chip.under { color: var(--under); border-color: currentColor; }
+  .escalate { margin-top: 14px; padding: 10px 14px; border-radius: 8px;
+    background: var(--warn-bg); color: var(--warn-ink); font-size: .9rem; }
+  .error { padding: 14px; border-radius: 8px; background: var(--err-bg); color: var(--err-ink); }
+  .error code { font-size: .85em; opacity: .85; }
+  footer { margin-top: 18px; color: var(--muted); font-size: .8rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Finance Policy Assistant</h1>
+  <p class="sub">Ask anything about expenses, company cards, receipts, approvals,
+    vendor invoices or the month-end close. Answers cite the policy section they come from.</p>
+
+  <div class="card">
+    <label for="q">What is your question?</label>
+    <textarea id="q" placeholder="e.g. Team dinner for 6 people costing 300 EUR in total. Is that within policy?"></textarea>
+    <div class="row">
+      <button id="ask">Ask</button>
+      <span class="toggle"><input type="checkbox" id="stream" checked><label for="stream" style="font-weight:400;margin:0">stream the answer</label></span>
+      <span class="hint">Ctrl+Enter to send</span>
+    </div>
+    <div class="examples" id="examples"></div>
+  </div>
+
+  <div class="card" id="panel">
+    <div id="answer"></div>
+    <div class="facts" id="facts"></div>
+    <div class="escalate" id="escalate" hidden>This one should be checked with Finance in #finance-help.</div>
+    <footer id="meta"></footer>
+  </div>
+</main>
+
+<script>
+const EXAMPLES = [
+  "Team dinner for 6 people costing 300 EUR in total. Is that within policy?",
+  "I lost the receipt for a 300 EUR client dinner. What do I do?",
+  "Can I give a client a 30 EUR gift card?",
+  "How many holiday days do I get?",
+];
+
+const $ = (id) => document.getElementById(id);
+const els = {
+  q: $("q"), ask: $("ask"), stream: $("stream"), panel: $("panel"),
+  answer: $("answer"), facts: $("facts"), escalate: $("escalate"), meta: $("meta"),
+};
+
+EXAMPLES.forEach((text) => {
+  const b = document.createElement("button");
+  b.textContent = text.length > 46 ? text.slice(0, 44) + "…" : text;
+  b.title = text;
+  b.onclick = () => { els.q.value = text; els.q.focus(); };
+  $("examples").appendChild(b);
+});
+
+els.ask.onclick = run;
+els.q.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) run();
+});
+
+function reset() {
+  els.panel.style.display = "block";
+  els.panel.classList.remove("error");
+  els.answer.textContent = "";
+  els.answer.className = "waiting";
+  els.facts.innerHTML = "";
+  els.escalate.hidden = true;
+  els.meta.textContent = "";
+}
+
+function chip(text, cls) {
+  const s = document.createElement("span");
+  s.className = "chip" + (cls ? " " + cls : "");
+  s.textContent = text;
+  els.facts.appendChild(s);
+}
+
+function showFacts(r) {
+  if (r.sources && r.sources.length) chip("section " + r.sources.join(", "));
+  if (r.verdict === "above_threshold") chip("above the threshold", "over");
+  if (r.verdict === "at_or_below_threshold") chip("within the threshold", "under");
+  if (r.per_person != null) chip(r.per_person.toFixed(2) + " EUR per person");
+  if (r.confidence) chip("confidence: " + r.confidence);
+  if (!r.in_scope) chip("outside the policy");
+  els.escalate.hidden = !r.escalate_to_finance;
+}
+
+function showError(body, fallback) {
+  const e = body && body.error;
+  els.answer.className = "";
+  els.answer.innerHTML = "";
+  const div = document.createElement("div");
+  div.className = "error";
+  div.textContent = e ? e.message : (fallback || "Something went wrong.");
+  if (e) {
+    const code = document.createElement("div");
+    code.innerHTML = "<code>" + e.type + " · " + e.layer + " layer · " +
+      (e.retryable ? "retryable" : "not retryable") + "</code>";
+    div.appendChild(code);
+  }
+  els.answer.appendChild(div);
+}
+
+async function run() {
+  const query = els.q.value.trim();
+  if (!query) { els.q.focus(); return; }
+
+  reset();
+  els.ask.disabled = true;
+  const started = performance.now();
+
+  try {
+    if (els.stream.checked) await runStreaming(query, started);
+    else await runPlain(query, started);
+  } catch (err) {
+    showError(null, "Could not reach the service. Is it still running?");
+  } finally {
+    els.ask.disabled = false;
+    els.answer.classList.remove("waiting");
+  }
+}
+
+function finish(payload, started) {
+  showFacts(payload.result);
+  els.meta.textContent =
+    payload.model + " · " + Math.round(performance.now() - started) + " ms · " + payload.request_id;
+}
+
+async function runPlain(query, started) {
+  const res = await fetch("/analyze", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+  const body = await res.json();
+  els.answer.classList.remove("waiting");
+  if (!res.ok) return showError(body);
+  els.answer.textContent = body.result.answer;
+  finish(body, started);
+}
+
+async function runStreaming(query, started) {
+  const res = await fetch("/analyze?stream=true", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+
+  // Rejected before the stream opened, so this is a normal JSON error.
+  if (!res.ok) {
+    els.answer.classList.remove("waiting");
+    return showError(await res.json());
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, "\n");
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop();
+    for (const frame of frames) handleFrame(frame, started);
+  }
+}
+
+function handleFrame(frame, started) {
+  let name = "message";
+  const data = [];
+  for (const line of frame.split("\n")) {
+    if (line.startsWith(":")) continue;              // keep-alive comment
+    if (line.startsWith("event:")) name = line.slice(6).trim();
+    else if (line.startsWith("data:")) data.push(line.slice(5).trim());
+  }
+  if (!data.length) return;
+
+  let payload;
+  try { payload = JSON.parse(data.join("\n")); } catch { return; }
+
+  if (name === "delta") {
+    els.answer.classList.add("waiting");
+    els.answer.textContent += payload.text;
+  } else if (name === "result") {
+    els.answer.classList.remove("waiting");
+    // The validated answer replaces the streamed text, which was provisional.
+    els.answer.textContent = payload.result.answer;
+    finish(payload, started);
+  } else if (name === "error") {
+    showError(payload);
+  }
+}
+</script>
+</body>
+</html>
