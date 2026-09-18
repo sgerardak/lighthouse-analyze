@@ -18,8 +18,11 @@ from fastapi.responses import (
 )
 
 from app.config import get_settings
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
 from app.errors import (
     AppError,
+    HTTPStatusError,
     InternalError,
     InvalidRequestError,
     QueryTooLongError,
@@ -159,6 +162,34 @@ async def handle_validation_error(
     return await handle_app_error(
         request, InvalidRequestError("Invalid request. " + "; ".join(fields))
     )
+
+
+# Statuses the router itself raises, named so clients get a stable code rather
+# than only an HTTP status to switch on.
+_ROUTING_ERROR_TYPES = {404: "not_found", 405: "method_not_allowed"}
+
+
+@app.exception_handler(StarletteHTTPException)
+async def handle_http_exception(
+    request: Request, exc: StarletteHTTPException
+) -> JSONResponse:
+    """Give framework-raised statuses the same body as every other failure.
+
+    Without this, an unknown path answers {"detail": "Not Found"} and breaks the
+    error contract the rest of the service keeps.
+    """
+    error_type = _ROUTING_ERROR_TYPES.get(exc.status_code)
+    if error_type is None:
+        error_type = "invalid_request" if exc.status_code < 500 else "internal_error"
+
+    message = str(exc.detail) if exc.status_code < 500 else "An internal error occurred."
+    response = await handle_app_error(
+        request, HTTPStatusError(exc.status_code, error_type, message)
+    )
+    # Keeps headers the status depends on, such as Allow on a 405.
+    for key, value in (exc.headers or {}).items():
+        response.headers.setdefault(key, value)
+    return response
 
 
 @app.exception_handler(Exception)

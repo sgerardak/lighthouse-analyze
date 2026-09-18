@@ -17,8 +17,8 @@ dinner, it said *"since your amount is under 250 EUR, you don't need manager
 approval"*. Section 3.2 says approval is needed **above** 250 EUR. It cited the
 right section, passed the schema, and reported `confidence: "high"`.
 
-Rather than guess, I built a small eval: 12 policy questions with
-known-correct answers (9 of them threshold comparisons), 5 repetitions, graded
+Rather than guess, I built a small eval (`evals/`, runnable): 12 policy questions
+with known-correct answers, 9 of them threshold comparisons, 5 repetitions, graded
 on the structured fields deterministically and on the prose by a Claude Opus 5
 judge against a required conclusion written from the policy. 240 answer calls.
 
@@ -290,8 +290,6 @@ answer, and not enough to run the thing. Missing, roughly in order of value:
   arithmetic check when the numbers disagree. Surfaced as a 502.
 - **Confidently wrong prose** — partially handled, by writing the decisive
   sentence ourselves. Unhandled wherever an answer needs no arithmetic.
-- **Routing errors** (404/405) currently return FastAPI's default body rather
-  than our error shape. Small, known, worth fixing for contract consistency.
 - **Single process, no backpressure.** One slow provider ties up a worker for up
   to 45 s; there is no queue, no shedding and no per-caller rate limit.
 

@@ -164,10 +164,15 @@ stops the service from starting rather than failing later during a request.
 .venv/Scripts/python -m pytest tests/ -q
 ```
 
-46 tests, none of which call the API — the provider is faked throughout, so the
+51 tests, none of which call the API — the provider is faked throughout, so the
 suite is free to run and safe in CI. They cover the policy loader, the
 arithmetic checks and the sentence they produce, the retry policy and the
-request deadline, and the streaming event contract end to end.
+request deadline, the error contract including framework-raised 404s and 405s,
+and the streaming event contract end to end.
+
+Answer *quality* is a separate question, measured by the eval in
+[evals/](evals/) — that one does call the API and costs money, so it prints an
+estimate and refuses to run without `--yes`.
 
 ## How it fits together
 

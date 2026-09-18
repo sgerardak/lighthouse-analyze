@@ -41,6 +41,22 @@ class InvalidRequestError(AppError):
     default_message = "The request payload is invalid."
 
 
+class HTTPStatusError(AppError):
+    """A bare HTTP status raised by the framework, given our error shape.
+
+    Routing failures (404, 405) never reach our own handlers as AppErrors, so
+    this carries the status and code per instance rather than per class.
+    """
+
+    layer = "http"
+    retryable = False
+
+    def __init__(self, status_code: int, error_type: str, message: str) -> None:
+        self.status_code = status_code
+        self.error_type = error_type
+        super().__init__(message)
+
+
 class QueryTooLongError(AppError):
     """The query exceeds the configured maximum length."""
 
