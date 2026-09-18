@@ -40,36 +40,15 @@ class PolicyAnswer(BaseModel):
     every field carries a description the model can read.
     """
 
-    answer: str = Field(
-        min_length=1,
-        max_length=1500,
-        description=(
-            "What the employee should know or do next, grounded in the policy. "
-            "Do not state whether an amount is within or over its limit; that "
-            "sentence is generated from the fields below and prepended."
-        ),
-    )
-    sources: list[str] = Field(
-        description=(
-            "Ids of the policy sections supporting the answer, e.g. ['3.2']. "
-            "Empty when the question is out of scope."
-        ),
-    )
-    in_scope: bool = Field(
-        description="True if the question is covered by the expense policy.",
-    )
-    escalate_to_finance: bool = Field(
-        description=(
-            "True if a human in finance must review this case. Always true when "
-            "the question is out of scope."
-        ),
-    )
-    confidence: Literal["high", "medium", "low"] = Field(
-        description="How well the cited policy sections settle the question.",
-    )
-    # The next four fields are the model's working, not decoration: app.limits
-    # recomputes them and rejects the answer if they disagree. They are required
-    # but nullable, because strict tool use expects every property to be present.
+    # Field order is deliberate and load-bearing. The model generates these
+    # properties in the order they appear here, so its working comes first and
+    # its prose last. That lets the streaming path compute and send the opening
+    # sentence as soon as the numbers land, before a word of prose exists, and
+    # it makes the model state its arithmetic before committing to an answer.
+    #
+    # The five numeric fields are checked by app.limits, which rejects the
+    # answer if they disagree with what Python computes. They are required but
+    # nullable, because strict tool use expects every property to be present.
     amount_eur: float | None = Field(
         description=(
             "The total amount in EUR the question is about, or null if the "
@@ -105,6 +84,36 @@ class PolicyAnswer(BaseModel):
             "says nothing about whether the expense is allowed, since some "
             "numbers are caps and others only trigger an approval. Use "
             "'not_applicable' only when limit_applied is null."
+        ),
+    )
+    sources: list[str] = Field(
+        description=(
+            "Ids of the policy sections supporting the answer, e.g. ['3.2']. "
+            "Empty when the question is out of scope."
+        ),
+    )
+    in_scope: bool = Field(
+        description="True if the question is covered by the expense policy.",
+    )
+    escalate_to_finance: bool = Field(
+        description=(
+            "True if a human in finance must review this case. Always true when "
+            "the question is out of scope."
+        ),
+    )
+    confidence: Literal["high", "medium", "low"] = Field(
+        description="How well the cited policy sections settle the question.",
+    )
+    # Last, so everything the opening sentence needs already exists when the
+    # prose starts streaming.
+    answer: str = Field(
+        min_length=1,
+        max_length=1500,
+        description=(
+            "What the employee should know or do next, grounded in the policy. "
+            "Write this last. Do not state how the amount compares to the "
+            "number; that sentence is generated from the fields above and "
+            "prepended to this text."
         ),
     )
 

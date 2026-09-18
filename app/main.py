@@ -16,13 +16,13 @@ from app.errors import (
     AppError,
     InternalError,
     InvalidRequestError,
-    NotImplementedYetError,
     QueryTooLongError,
     to_error_response,
 )
 from app.policy import get_policy
 from app.schemas import AnalyzeRequest, AnalyzeResponse
-from app.service import analyze_query
+from app.service import analyze_query, stream_analyze_query
+from app.streaming import sse_response
 
 logging.basicConfig(
     level=logging.INFO,
@@ -173,10 +173,16 @@ async def health() -> dict:
 @app.post("/analyze", response_model=AnalyzeResponse)
 async def analyze(
     request: Request, payload: AnalyzeRequest, stream: bool = False
-) -> AnalyzeResponse:
-    """Answer a policy question, grounded in the expense policy."""
+):
+    """Answer a policy question, grounded in the expense policy.
+
+    With stream=true the answer arrives as server-sent events; the response is
+    then always 200, and failures arrive as an 'error' event, because the status
+    line is already sent by the time most things can go wrong.
+    """
+    request_id = _request_id(request)
     if stream:
-        raise NotImplementedYetError(
-            "Streaming responses are not implemented yet; call without ?stream=true."
+        return sse_response(
+            stream_analyze_query(payload.query, request_id), request_id
         )
-    return await analyze_query(payload.query, _request_id(request))
+    return await analyze_query(payload.query, request_id)

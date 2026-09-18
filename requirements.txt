@@ -1,6 +1,9 @@
 fastapi
 uvicorn[standard]
 anthropic
+# Ships with anthropic; listed because app/llm/anthropic_client.py imports it
+# directly to parse half-written tool JSON while streaming.
+jiter
 pydantic
 pydantic-settings
 tenacity

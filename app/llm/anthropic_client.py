@@ -4,20 +4,38 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import AsyncIterator
 
 import anthropic
+import jiter
 
 from app.config import get_settings
 from app.errors import (
+    AppError,
     InternalError,
     LLMAuthError,
     LLMInvalidOutputError,
     LLMTimeoutError,
     LLMUnavailableError,
 )
-from app.llm.base import LLMClient, LLMResult
+from app.llm.base import LLMClient, LLMResult, LLMStreamEvent
 
 logger = logging.getLogger("app.llm.anthropic")
+
+
+def _parse_partial(raw: str) -> dict | None:
+    """Parse half-written tool JSON, including the string being typed.
+
+    The SDK's own snapshot omits an unterminated string, which would hide the
+    answer until it was complete and defeat the point of streaming.
+    'trailing-strings' keeps it, so the prose can be forwarded as it arrives.
+    """
+    try:
+        parsed = jiter.from_json(raw.encode("utf-8"), partial_mode="trailing-strings")
+    except ValueError:
+        # Mid-token states that parse as nothing at all are simply skipped.
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _strict(schema: dict) -> dict:
@@ -59,44 +77,103 @@ class AnthropicClient(LLMClient):
         started = time.perf_counter()
         try:
             response = await self._client.messages.create(
-                model=self._model,
-                max_tokens=self._max_output_tokens,
-                system=[
-                    {
-                        "type": "text",
-                        "text": system_prompt,
-                        # The policy dominates the prompt and never changes
-                        # between requests, so cache it.
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
-                messages=[{"role": "user", "content": user_message}],
-                tools=[
-                    {
-                        "name": schema_name,
-                        "description": schema_description,
-                        "input_schema": _strict(schema),
-                        # Without this the API treats 'required' as advice: the
-                        # model can omit a required field and still return a
-                        # well-formed tool call. Measured at ~19% of calls on
-                        # some questions; strict mode removed it entirely.
-                        "strict": True,
-                    }
-                ],
-                tool_choice={"type": "tool", "name": schema_name},
+                **self._request(system_prompt, user_message, schema, schema_name,
+                                schema_description)
             )
-        # APITimeoutError subclasses APIConnectionError, so it must come first.
-        except anthropic.APITimeoutError as exc:
-            raise LLMTimeoutError(
-                f"Claude did not respond within {get_settings().LLM_TIMEOUT_SECONDS}s."
-            ) from exc
-        except anthropic.APIConnectionError as exc:
-            raise LLMUnavailableError("Could not reach the Claude API.") from exc
-        except anthropic.APIStatusError as exc:
-            raise self._map_status_error(exc) from exc
+        except Exception as exc:
+            raise self._as_app_error(exc) from exc
 
         latency_ms = int((time.perf_counter() - started) * 1000)
         return self._to_result(response, schema_name, latency_ms)
+
+    async def stream_structured_output(
+        self,
+        system_prompt: str,
+        user_message: str,
+        schema: dict,
+        schema_name: str,
+        schema_description: str,
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """Yield the tool input as Claude produces it, then the final result."""
+        started = time.perf_counter()
+        request = self._request(
+            system_prompt, user_message, schema, schema_name, schema_description
+        )
+        # Server-side buffering would deliver the whole tool input at once, so
+        # there would be nothing to stream. The cost is that the API stops
+        # validating the input, which is why the snapshots below are untrusted
+        # and the caller revalidates the final result.
+        request["tools"][0]["eager_input_streaming"] = True
+
+        raw = ""
+        try:
+            async with self._client.messages.stream(**request) as stream:
+                async for event in stream:
+                    if event.type != "input_json":
+                        continue
+                    raw += event.partial_json or ""
+                    snapshot = _parse_partial(raw)
+                    if snapshot is not None:
+                        yield LLMStreamEvent(snapshot=snapshot)
+                response = await stream.get_final_message()
+        except Exception as exc:
+            raise self._as_app_error(exc) from exc
+
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        yield LLMStreamEvent(result=self._to_result(response, schema_name, latency_ms))
+
+    def _request(
+        self,
+        system_prompt: str,
+        user_message: str,
+        schema: dict,
+        schema_name: str,
+        schema_description: str,
+    ) -> dict:
+        """Build the request both paths send, so they cannot drift apart."""
+        return {
+            "model": self._model,
+            "max_tokens": self._max_output_tokens,
+            "system": [
+                {
+                    "type": "text",
+                    "text": system_prompt,
+                    # The policy dominates the prompt and never changes between
+                    # requests, so cache it.
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            "messages": [{"role": "user", "content": user_message}],
+            "tools": [
+                {
+                    "name": schema_name,
+                    "description": schema_description,
+                    "input_schema": _strict(schema),
+                    # Without this the API treats 'required' as advice: the model
+                    # can omit a required field and still return a well-formed
+                    # tool call. Measured at ~19% of calls on some questions;
+                    # strict mode removed it entirely.
+                    "strict": True,
+                }
+            ],
+            "tool_choice": {"type": "tool", "name": schema_name},
+        }
+
+    @staticmethod
+    def _as_app_error(exc: Exception) -> Exception:
+        """Translate an SDK exception into ours, leaving our own errors alone."""
+        if isinstance(exc, AppError):
+            return exc
+        # APITimeoutError subclasses APIConnectionError, so it must come first.
+        if isinstance(exc, anthropic.APITimeoutError):
+            return LLMTimeoutError(
+                f"Claude did not respond within {get_settings().LLM_TIMEOUT_SECONDS}s."
+            )
+        if isinstance(exc, anthropic.APIConnectionError):
+            return LLMUnavailableError("Could not reach the Claude API.")
+        if isinstance(exc, anthropic.APIStatusError):
+            return AnthropicClient._map_status_error(exc)
+        return exc
 
     @staticmethod
     def _map_status_error(exc: anthropic.APIStatusError) -> Exception:
