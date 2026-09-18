@@ -10,7 +10,12 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+)
 
 from app.config import get_settings
 from app.errors import (
@@ -21,6 +26,7 @@ from app.errors import (
     to_error_response,
 )
 from app.policy import get_policy
+from app.policy_view import render_policy_html
 from app.schemas import AnalyzeRequest, AnalyzeResponse
 from app.service import analyze_query, stream_analyze_query
 from app.streaming import sse_response
@@ -167,6 +173,18 @@ async def handle_unexpected_error(request: Request, exc: Exception) -> JSONRespo
 async def index() -> FileResponse:
     """Serve the demo page, so the root URL is useful rather than a 404."""
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/policy", include_in_schema=False)
+async def policy_page() -> HTMLResponse:
+    """Show the policy the answers are grounded in, anchored by section id."""
+    return HTMLResponse(render_policy_html(get_policy()))
+
+
+@app.get("/policy.md", include_in_schema=False)
+async def policy_markdown() -> PlainTextResponse:
+    """Serve the policy exactly as the model receives it."""
+    return PlainTextResponse(get_policy().text, media_type="text/markdown")
 
 
 @app.get("/health")

@@ -74,6 +74,8 @@
     font-size: .8rem; padding: 4px 10px; border-radius: 999px;
     border: 1px solid var(--line); color: var(--muted);
   }
+  .chip.link { color: var(--accent); border-color: currentColor; text-decoration: none; }
+  .chip.link:hover { background: var(--bg); }
   .chip.over { color: var(--over); border-color: currentColor; }
   .chip.under { color: var(--under); border-color: currentColor; }
   .escalate { margin-top: 14px; padding: 10px 14px; border-radius: 8px;
@@ -87,7 +89,8 @@
 <main>
   <h1>Finance Policy Assistant</h1>
   <p class="sub">Ask anything about expenses, company cards, receipts, approvals,
-    vendor invoices or the month-end close. Answers cite the policy section they come from.</p>
+    vendor invoices or the month-end close. Answers cite the section they come from,
+    and every citation links into <a href="/policy" target="_blank" rel="noopener">the policy</a>.</p>
 
   <div class="card">
     <label for="q">What is your question?</label>
@@ -152,8 +155,18 @@ function chip(text, cls) {
   els.facts.appendChild(s);
 }
 
+function sourceChip(id) {
+  const a = document.createElement("a");
+  a.className = "chip link";
+  a.href = "/policy#" + encodeURIComponent(id);
+  a.target = "_blank";
+  a.rel = "noopener";
+  a.textContent = "section " + id;
+  els.facts.appendChild(a);
+}
+
 function showFacts(r) {
-  if (r.sources && r.sources.length) chip("section " + r.sources.join(", "));
+  (r.sources || []).forEach(sourceChip);
   if (r.verdict === "above_threshold") chip("above the threshold", "over");
   if (r.verdict === "at_or_below_threshold") chip("within the threshold", "under");
   if (r.per_person != null) chip(r.per_person.toFixed(2) + " EUR per person");
