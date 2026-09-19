@@ -80,6 +80,21 @@
   .chip.under { color: var(--under); border-color: currentColor; }
   .escalate { margin-top: 14px; padding: 10px 14px; border-radius: 8px;
     background: var(--warn-bg); color: var(--warn-ink); font-size: .9rem; }
+  details { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+  summary {
+    cursor: pointer; color: var(--muted); font-size: .85rem;
+    font-weight: 600; list-style: none;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::before { content: "▸ "; display: inline-block; width: 1em; }
+  details[open] > summary::before { content: "▾ "; }
+  summary .note { font-weight: 400; opacity: .8; }
+  details pre {
+    margin: 10px 0 0; padding: 12px 14px; overflow: auto; max-height: 320px;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+    white-space: pre; color: var(--ink);
+  }
   .error { padding: 14px; border-radius: 8px; background: var(--err-bg); color: var(--err-ink); }
   .error code { font-size: .85em; opacity: .85; }
   footer { margin-top: 18px; color: var(--muted); font-size: .8rem; }
@@ -108,6 +123,16 @@
     <div class="facts" id="facts"></div>
     <div class="escalate" id="escalate" hidden>This one should be checked with Finance in #finance-help.</div>
     <footer id="meta"></footer>
+
+    <details id="raw-json" hidden>
+      <summary>Response JSON <span class="note">what <code>POST /analyze</code> actually returns</span></summary>
+      <pre id="json"></pre>
+    </details>
+
+    <details id="raw-events" hidden>
+      <summary>SSE events <span class="note" id="event-count"></span></summary>
+      <pre id="events"></pre>
+    </details>
   </div>
 </main>
 
@@ -123,7 +148,27 @@ const $ = (id) => document.getElementById(id);
 const els = {
   q: $("q"), ask: $("ask"), stream: $("stream"), panel: $("panel"),
   answer: $("answer"), facts: $("facts"), escalate: $("escalate"), meta: $("meta"),
+  rawJson: $("raw-json"), json: $("json"),
+  rawEvents: $("raw-events"), events: $("events"), eventCount: $("event-count"),
 };
+
+// Kept across a request so the panels can be filled as things arrive.
+let log = [];
+let deltaCount = 0;
+
+function logEvent(name, started, detail) {
+  log.push(`[${String(Math.round(performance.now() - started)).padStart(5)}ms] ` +
+           `${name}${detail ? "  " + detail : ""}`);
+  els.events.textContent = log.join("\n");
+  els.eventCount.textContent =
+    `${log.length} events, ${deltaCount} delta${deltaCount === 1 ? "" : "s"}`;
+  els.rawEvents.hidden = false;
+}
+
+function showJson(payload) {
+  els.json.textContent = JSON.stringify(payload, null, 2);
+  els.rawJson.hidden = false;
+}
 
 EXAMPLES.forEach((text) => {
   const b = document.createElement("button");
@@ -146,6 +191,12 @@ function reset() {
   els.facts.innerHTML = "";
   els.escalate.hidden = true;
   els.meta.textContent = "";
+  log = [];
+  deltaCount = 0;
+  els.json.textContent = "";
+  els.events.textContent = "";
+  els.rawJson.hidden = true;
+  els.rawEvents.hidden = true;
 }
 
 function chip(text, cls) {
@@ -224,6 +275,7 @@ async function runPlain(query, started) {
   });
   const body = await res.json();
   els.answer.classList.remove("waiting");
+  showJson(body);
   if (!res.ok) return showError(body);
   els.answer.textContent = body.result.answer;
   finish(body, started);
@@ -239,7 +291,9 @@ async function runStreaming(query, started) {
   // Rejected before the stream opened, so this is a normal JSON error.
   if (!res.ok) {
     els.answer.classList.remove("waiting");
-    return showError(await res.json());
+    const body = await res.json();
+    showJson(body);
+    return showError(body);
   }
 
   const reader = res.body.getReader();
@@ -270,15 +324,23 @@ function handleFrame(frame, started) {
   try { payload = JSON.parse(data.join("\n")); } catch { return; }
 
   if (name === "delta") {
+    deltaCount += 1;
+    logEvent("delta ", started, `+${payload.text.length} chars  ${JSON.stringify(payload.text)}`);
     els.answer.classList.add("waiting");
     els.answer.textContent += payload.text;
   } else if (name === "result") {
+    logEvent("result", started);
+    showJson(payload);
     els.answer.classList.remove("waiting");
     // The validated answer replaces the streamed text, which was provisional.
     els.answer.textContent = payload.result.answer;
     finish(payload, started);
   } else if (name === "error") {
+    logEvent("error ", started, payload.error ? payload.error.type : "");
+    showJson(payload);
     showError(payload);
+  } else if (name === "meta") {
+    logEvent("meta  ", started, payload.model);
   }
 }
 </script>
